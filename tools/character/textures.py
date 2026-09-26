@@ -682,7 +682,7 @@ def boots_maps(r, h, look, ao):
     tongue = lz * (1 - lace)
     col = mix(col, col * 0.75, tongue * 0.6)
     col = mix(col, srgb((0.08, 0.07, 0.06)), lace)
-    col = mix(col, srgb((0.55, 0.52, 0.45)), eyelets)
+    col = mix(col, srgb((0.35, 0.33, 0.3)), eyelets * 0.7)
     height += lace * 0.0015 - tongue * 0.0005 + eyelets * 0.0006
     rough = rough * (1 - eyelets) + 0.25 * eyelets
     # collar padding at the top

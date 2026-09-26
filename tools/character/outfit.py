@@ -322,6 +322,9 @@ def build_garment(h, name, allowed, cuts, offset, material, smooth=3,
         mod.use_rim = True
         mod.use_even_offset = False
         mod.use_quality_normals = True
+        for g in ("_shell_inner", "_shell_rim"):
+            if g not in obj.vertex_groups:
+                obj.vertex_groups.new(name=g)
         mod.shell_vertex_group = "_shell_inner"
         mod.rim_vertex_group = "_shell_rim"
         _apply(obj, mod)

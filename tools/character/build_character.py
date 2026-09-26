@@ -56,6 +56,7 @@ def build(name):
     strands.add(human, parts, spec["look"])
 
     scene.finalize(rig, name)
+    bpy.ops.file.pack_all()  # self-contained .blend (textures embedded)
     bpy.ops.wm.save_as_mainfile(filepath=os.path.join(out_dir, f"{name}.blend"))
     scene.render_previews(rig, spec, out_dir, name)
     # Save again so the .blend keeps the relaxed preview pose off (rest pose).
