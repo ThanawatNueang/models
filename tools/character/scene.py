@@ -115,14 +115,15 @@ def render_previews(rig, spec, out_dir, name):
     floor.name = "_floor"
     fm = bpy.data.materials.new("_floor")
     fm.use_nodes = True
-    fm.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.2, 0.2, 0.21, 1)
+    fm.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.08, 0.08, 0.085, 1)
     fm.node_tree.nodes["Principled BSDF"].inputs["Roughness"].default_value = 0.8
     floor.data.materials.append(fm)
 
     height = max((rig.matrix_world @ b.tail_local).z for b in rig.data.bones)
-    key = _area("_key", (-2.2, -3.0, 2.8), (0, 0, 1.2), 380, 2.0, (1.0, 0.96, 0.9))
-    fill = _area("_fill", (2.8, -2.0, 1.4), (0, 0, 1.0), 120, 3.0, (0.85, 0.9, 1.0))
-    rim = _area("_rim", (0.8, 3.0, 2.4), (0, 0, 1.3), 320, 1.5, (0.9, 0.95, 1.0))
+    key = _area("_key", (-2.0, -2.6, 2.6), (0, 0, 1.3), 520, 1.6, (1.0, 0.93, 0.84))
+    fill = _area("_fill", (2.8, -2.2, 1.2), (0, 0, 1.0), 70, 4.0, (0.8, 0.88, 1.0))
+    rim = _area("_rim", (1.6, 2.6, 2.6), (0, 0, 1.4), 650, 1.0, (0.75, 0.85, 1.0))
+    rim2 = _area("_rim2", (-1.8, 2.4, 1.8), (0, 0, 1.2), 300, 1.0, (1.0, 0.9, 0.8))
 
     cam_data = bpy.data.cameras.new("_cam")
     cam = bpy.data.objects.new("_cam", cam_data)
@@ -142,10 +143,10 @@ def render_previews(rig, spec, out_dir, name):
     rig.data.pose_position = "POSE"
     mh.pose_relaxed(rig)
     mid = height * 0.52
-    shoot("front.png", (0, -5.2, mid), (0, 0, mid), 50)
-    shoot("three_quarter.png", (3.4, -3.9, mid + 0.1), (0, 0, mid), 50)
-    shoot("side.png", (5.2, 0, mid), (0, 0, mid), 50)
-    shoot("back.png", (0, 5.2, mid), (0, 0, mid), 50)
+    shoot("front.png", (0, -5.6, mid + 0.05), (0, 0, mid), 85)
+    shoot("three_quarter.png", (3.6, -4.3, mid + 0.15), (0, 0, mid), 85)
+    shoot("side.png", (5.6, 0, mid + 0.05), (0, 0, mid), 85)
+    shoot("back.png", (0, 5.6, mid + 0.05), (0, 0, mid), 85)
     head = rig.pose.bones["mixamorig:Head"]
     hz = (rig.matrix_world @ head.head).z + 0.09
     shoot("face.png", (0.35, -0.95, hz + 0.02), (0, 0, hz), 85, 900, 900)
@@ -155,8 +156,8 @@ def render_previews(rig, spec, out_dir, name):
     shoot("hand.png", (hp.x + 0.55, hp.y - 0.75, hp.z + 0.08), hp, 85, 900, 900)
     rig.data.pose_position = "POSE"
     mh.pose_relaxed(rig, 0.0)
-    shoot("apose.png", (0, -6.0, mid), (0, 0, mid), 50)
+    shoot("apose.png", (0, -6.2, mid), (0, 0, mid), 60, 1200, 1000)
 
-    for o in (floor, key, fill, rim, cam):
+    for o in (floor, key, fill, rim, rim2, cam):
         bpy.data.objects.remove(o, do_unlink=True)
     rig.data.pose_position = "REST"

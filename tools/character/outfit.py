@@ -120,6 +120,31 @@ def taubin(co, faces, idx, iters, fixed=(), lam=0.5, mu=-0.53, weight=None):
     return co
 
 
+def smooth_boundary(co, faces, iters=8):
+    """1D Laplacian along open boundary loops: removes the quad staircase
+    from hems, cuffs and the hairline."""
+    count = {}
+    for f in faces:
+        k = len(f)
+        for i in range(k):
+            e = tuple(sorted((f[i], f[(i + 1) % k])))
+            count[e] = count.get(e, 0) + 1
+    nb = {}
+    for (a, b), c in count.items():
+        if c == 1:
+            nb.setdefault(a, []).append(b)
+            nb.setdefault(b, []).append(a)
+    idx = np.array([v for v, n in nb.items() if len(n) == 2])
+    if not len(idx):
+        return co
+    n1 = np.array([nb[v][0] for v in idx])
+    n2 = np.array([nb[v][1] for v in idx])
+    co = co.copy()
+    for _ in range(iters):
+        co[idx] = co[idx] * 0.5 + (co[n1] + co[n2]) * 0.25
+    return co
+
+
 def relax_with_clearance(co, faces, idx, fixed, clearance, bvh, iters):
     """Inflate & relax: alternately Laplacian-smooth the shell and push every
     vertex back out so it keeps `clearance` metres from the body surface.
@@ -149,6 +174,46 @@ def relax_with_clearance(co, faces, idx, fixed, clearance, bvh, iters):
             co[free] += (acc / lens[:, None] - co[free]) * 0.6
         push()
     return co
+
+
+def drape(co, idx, p0, direction, start, taper, n_az=72, n_h=90, blur=2):
+    """Gravity drape: loose cloth hangs from the widest point above it.
+
+    Vertices `idx` are expressed in cylindrical coordinates around the axis
+    (p0, direction). Going down the axis, the cloth radius per azimuth can only
+    shrink by `taper` metres per metre, so fabric falls straight from the
+    chest / seat / thigh instead of hugging the waist, knees and calves.
+    Only vertices farther than `start` metres along the axis are moved."""
+    d = np.asarray(direction, float)
+    d /= np.linalg.norm(d)
+    u = np.cross(d, [0, 1.0, 0] if abs(d[1]) < 0.9 else [1.0, 0, 0])
+    u /= np.linalg.norm(u)
+    v = np.cross(d, u)
+    rel = co[idx] - p0
+    h = rel @ d
+    rad = rel - h[:, None] * d
+    r = np.linalg.norm(rad, axis=1)
+    az = np.arctan2(rad @ v, rad @ u)
+    ai = ((az + np.pi) / (2 * np.pi) * n_az).astype(int) % n_az
+    h0, h1 = h.min(), h.max()
+    hi = np.clip(((h - h0) / max(h1 - h0, 1e-6) * n_h).astype(int), 0, n_h - 1)
+    env = np.zeros((n_az, n_h))
+    np.maximum.at(env, (ai, hi), r)
+    dh = (h1 - h0) / n_h
+    for k in range(1, n_h):
+        env[:, k] = np.maximum(env[:, k], env[:, k - 1] - taper * dh)
+    # smooth around the circumference, then re-apply the hang constraint
+    for _ in range(blur):
+        env = (np.roll(env, 1, 0) + 2 * env + np.roll(env, -1, 0)) / 4
+    for k in range(1, n_h):
+        env[:, k] = np.maximum(env[:, k], env[:, k - 1] - taper * dh)
+    target = env[ai, hi]
+    w = np.clip((h - start) / 0.06, 0, 1)
+    new_r = np.maximum(r, r + (target - r) * w)
+    out = co.copy()
+    safe = np.maximum(r, 1e-9)[:, None]
+    out[idx] = p0 + h[:, None] * d + rad / safe * new_r[:, None]
+    return out
 
 
 def faces_in(faces, mask):
@@ -213,7 +278,7 @@ class HairlineCut:
 
 def build_garment(h, name, allowed, cuts, offset, material, smooth=3,
                   thickness=0.003, snap=0.03, delete_margin=0.02, keep_body=None,
-                  folds=0.0, fold_scale=8.0, drop_faces=None):
+                  folds=0.0, fold_scale=8.0, drop_faces=None, post=None):
     """Create a garment object; returns (obj, faces, covered_body_face_mask)."""
     co = h.co
     body_faces = h.body_faces
@@ -235,9 +300,13 @@ def build_garment(h, name, allowed, cuts, offset, material, smooth=3,
             sel = bidx[(which == k) & (fb[k] > -snap)]
             if len(sel):
                 new[sel] -= fields[k, sel][:, None] * c.n[None, :]
+    new = smooth_boundary(new, vf, iters=8)
     used = np.unique(np.concatenate([np.asarray(f) for f in vf]))
     target = offset(co, vertex_normals(co, vf)) if callable(offset) else np.full(len(co), offset)
     new = relax_with_clearance(new, vf, used, bset, target, h.body_bvh, smooth)
+    if post is not None:
+        new = post(new, used)
+        new = relax_with_clearance(new, vf, used, bset, target, h.body_bvh, 2)
     if folds:
         nrm = vertex_normals(new, vf)
         fn = noise.fbm(new, fold_scale, 3, seed=abs(hash(name)) % 97) - 0.5
@@ -352,7 +421,14 @@ def build(h, spec):
         over_pants = noise.smoothstep(lm.hips[2] + 0.13, lm.hips[2] + 0.07, p[:, 2])
         return np.maximum(o, 0.022 * over_pants)
 
-    shirt, cov = build_garment(h, "Shirt", allowed, cuts, shirt_offset, mats["shirt"],
+    armpit_z = min(lm.shoulder_l[2], lm.shoulder_r[2]) - 0.11
+
+    def shirt_drape(new, used):
+        torso = used[(arms[used] < 0.25) & (new[used, 2] < armpit_z + 0.02)]
+        return drape(new, torso, np.array([0.0, lm.spine2[1] - 0.02, armpit_z]), (0, 0, -1),
+                     start=0.03, taper=0.10)
+
+    shirt, cov = build_garment(h, "Shirt", allowed, cuts, shirt_offset, mats["shirt"], post=shirt_drape,
                                smooth=6, thickness=0.0035, folds=0.006, fold_scale=9,
                                keep_body=tear_mask if tear else None, drop_faces=tear)
     parts["shirt"] = shirt
@@ -379,7 +455,17 @@ def build(h, spec):
         o += 0.008 * thigh
         return o
 
-    pants, cov = build_garment(h, "Pants", allowed, cuts, pants_offset, mats["pants"],
+    def pants_drape(new, used):
+        for s_, hip, ankle in ((1, lm.hip_l, lm.ankle_l), (-1, lm.hip_r, lm.ankle_r)):
+            leg = used[(new[used, 0] * s_ > 0.005) & (new[used, 2] < lm.hips[2] - 0.05)]
+            before = new.copy()
+            new = drape(new, leg, hip, ankle - hip, start=0.10, taper=0.07)
+            # blouse: gather the hem back in where it tucks into the boot
+            g = noise.smoothstep(boot_top - 0.03, boot_top + 0.05, new[leg, 2])[:, None]
+            new[leg] = before[leg] + (new[leg] - before[leg]) * g
+        return new
+
+    pants, cov = build_garment(h, "Pants", allowed, cuts, pants_offset, mats["pants"], post=pants_drape,
                                smooth=8, thickness=0.004, folds=0.008, fold_scale=7,
                                keep_body=tear_mask if tear else None, drop_faces=tear)
     parts["pants"] = pants
@@ -400,8 +486,8 @@ def build(h, spec):
     hl = wear.get("hairline", 0.0)
     table = [(0, lm.brow_z + 0.050 + hl), (25, lm.brow_z + 0.046 + hl),
              (45, lm.brow_z + 0.034 + hl), (62, eye_z + 0.020), (75, eye_z - 0.005),
-             (84, eye_z + 0.012), (98, eye_z + 0.030), (112, eye_z + 0.018),
-             (128, eye_z - 0.010), (150, nape + 0.065), (180, nape + 0.055)]
+             (84, eye_z + 0.012), (98, eye_z + 0.024), (108, eye_z - 0.012),
+             (122, eye_z - 0.040), (150, nape + 0.040), (180, nape + 0.030)]
     hair_cut = HairlineCut(hc, table)
     allowed = is_body & (head + bw("Neck") > 0.5) & (co[:, 2] > lm.neck[2] + 0.03) & \
         (np.abs(co[:, 0]) < 0.12)
