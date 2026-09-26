@@ -390,8 +390,8 @@ def skin_maps(r, h, look, ao):
     col = col * (0.55 + 0.45 * ao[:, None])
 
     # --- height: pores, wrinkles, knuckle creases, lip lines
-    pores = (noise.value(P, 1800.0, seed=50) - 0.5) * 0.00010
-    pores += (noise.value(P, 700.0, seed=51) - 0.5) * 0.00012
+    pores = (noise.value(P, 1800.0, seed=50) - 0.5) * 0.00005
+    pores += (noise.value(P, 700.0, seed=51) - 0.5) * 0.00004
     height += pores * (0.5 + 1.2 * face_front)
     forehead = ss(lm.brow_z + 0.012, lm.brow_z + 0.02, P[:, 2]) * \
         ss(lm.brow_z + 0.055, lm.brow_z + 0.035, P[:, 2]) * face_front

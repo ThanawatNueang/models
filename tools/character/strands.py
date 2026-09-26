@@ -45,9 +45,9 @@ def hair_material(name, look):
         pass
     c = np.asarray(look["hair"])
     lum = float(c.mean())
-    melanin = float(np.clip(1.0 - lum * 2.0, 0.3, 0.97))
+    melanin = float(np.clip(1.0 - lum * 0.6, 0.3, 0.99))
     hb.inputs["Melanin"].default_value = melanin
-    hb.inputs["Melanin Redness"].default_value = 0.3 if not look["zombie"] else 0.15
+    hb.inputs["Melanin Redness"].default_value = 0.12 if not look["zombie"] else 0.08
     hb.inputs["Roughness"].default_value = 0.35
     hb.inputs["Radial Roughness"].default_value = 0.4
     if "Random Color" in hb.inputs:
