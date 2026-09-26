@@ -54,6 +54,15 @@ class Landmarks:
                       & (co[body, 2] < self.eye[2])]
         self.nose = co[head_v[np.argmin(co[head_v, 1])]]
         self.brow_z = self.eye[2] + 0.022
+        # nipples: most forward chest vertex on each side; navel: front midline dimple
+        chest_z = (self.shoulder_l[2] + self.spine2[2]) / 2
+        for s, key in ((1, "nipple_l"), (-1, "nipple_r")):
+            cand = body[(co[body, 0] * s > 0.07) & (co[body, 0] * s < 0.14) &
+                        (np.abs(co[body, 2] - (chest_z - 0.05)) < 0.07)]
+            setattr(self, key, co[cand[np.argmin(co[cand, 1])]])
+        cand = body[(np.abs(co[body, 0]) < 0.004) & (co[body, 2] > self.hips[2] + 0.05) &
+                    (co[body, 2] < self.hips[2] + 0.16) & (co[body, 1] < self.hips[1])]
+        self.navel = co[cand[np.argmax(co[cand, 1])]]
 
 
 # --------------------------------------------------------------- helpers
@@ -378,7 +387,8 @@ def build(h, spec):
 
     wear = spec["outfit"]
     mats = {k: material(f"{spec['name']}_{k}") for k in ("skin", "eye", "teeth", "tongue",
-                                                         "shirt", "pants", "boots", "hair")}
+                                                         "shirt", "pants", "boots", "hair",
+                                                         "underwear")}
     parts = {}
     covered = np.zeros(len(h.body_faces), bool)
     rng = np.random.default_rng(spec.get("seed", 1))
@@ -389,99 +399,125 @@ def build(h, spec):
         tear = lambda c: tear_fn(c[None, :])[0] > 0.68
         tear_mask = noise.fbm(co, 5.0, 3, seed=7) > 0.64  # body kept under holes
 
-    # ---------------- shirt (short sleeve crew-neck t-shirt)
-    hem_z = lm.hips[2] - wear.get("shirt_hem", 0.07)
-    neck_pt = lm.neck + np.array([0, 0, -0.035])
-    cuts = [Cut((0, 0, hem_z), (0, 0, -1)),
-            NecklineCut(lm.neck)]
-    sleeve = wear.get("sleeve", 0.45)
-    for s in ("l", "r"):
-        sh, el = getattr(lm, f"shoulder_{s}"), getattr(lm, f"elbow_{s}")
-        d = (el - sh) / np.linalg.norm(el - sh)
-        S = "Left" if s == "l" else "Right"
-        side = (co[:, 0] * (1 if s == "l" else -1) > 0) & (bw(f"{S}Arm", f"{S}ForeArm") > 0.3)
-        c = Cut(sh + (el - sh) * sleeve, d, where=side)
-        c.side = 1 if s == "l" else -1
-        cuts.append(c)
-    allowed = is_body & (hands < 0.05) & (head < 0.3) & (upleg < 0.8)
-
-    def shirt_offset(p, n):
-        belly = noise.smoothstep(lm.hips[2] - 0.1, lm.hips[2] + 0.12, p[:, 2]) * \
-            noise.smoothstep(lm.spine2[2] + 0.05, lm.hips[2] + 0.12, p[:, 2])
-        front_back = np.clip(np.abs(n[:, 1]), 0, 1)
-        o = 0.006 + 0.007 * belly * front_back
-        hem = noise.smoothstep(hem_z + 0.12, hem_z, p[:, 2])
-        o += 0.008 * hem
+    if wear.get("style", "clothes") == "clothes":
+        # ---------------- shirt (short sleeve crew-neck t-shirt)
+        hem_z = lm.hips[2] - wear.get("shirt_hem", 0.07)
+        neck_pt = lm.neck + np.array([0, 0, -0.035])
+        cuts = [Cut((0, 0, hem_z), (0, 0, -1)),
+                NecklineCut(lm.neck)]
+        sleeve = wear.get("sleeve", 0.45)
         for s in ("l", "r"):
             sh, el = getattr(lm, f"shoulder_{s}"), getattr(lm, f"elbow_{s}")
             d = (el - sh) / np.linalg.norm(el - sh)
-            t = ((p - sh) @ d) / np.linalg.norm(el - sh)
-            side = p[:, 0] * (1 if s == "l" else -1) > 0.12
-            o += np.where(side, 0.009 * noise.smoothstep(0.05, sleeve, t), 0)
-        collar = noise.smoothstep(neck_pt[2] - 0.08, neck_pt[2], p[:, 2])
-        o = o * (1 - 0.4 * collar)
-        # hang over the pants waistband: stay outside the pants shell
-        over_pants = noise.smoothstep(lm.hips[2] + 0.13, lm.hips[2] + 0.07, p[:, 2])
-        return np.maximum(o, 0.022 * over_pants)
+            S = "Left" if s == "l" else "Right"
+            side = (co[:, 0] * (1 if s == "l" else -1) > 0) & (bw(f"{S}Arm", f"{S}ForeArm") > 0.3)
+            c = Cut(sh + (el - sh) * sleeve, d, where=side)
+            c.side = 1 if s == "l" else -1
+            cuts.append(c)
+        allowed = is_body & (hands < 0.05) & (head < 0.3) & (upleg < 0.8)
 
-    armpit_z = min(lm.shoulder_l[2], lm.shoulder_r[2]) - 0.11
+        def shirt_offset(p, n):
+            belly = noise.smoothstep(lm.hips[2] - 0.1, lm.hips[2] + 0.12, p[:, 2]) * \
+                noise.smoothstep(lm.spine2[2] + 0.05, lm.hips[2] + 0.12, p[:, 2])
+            front_back = np.clip(np.abs(n[:, 1]), 0, 1)
+            o = 0.006 + 0.007 * belly * front_back
+            hem = noise.smoothstep(hem_z + 0.12, hem_z, p[:, 2])
+            o += 0.008 * hem
+            for s in ("l", "r"):
+                sh, el = getattr(lm, f"shoulder_{s}"), getattr(lm, f"elbow_{s}")
+                d = (el - sh) / np.linalg.norm(el - sh)
+                t = ((p - sh) @ d) / np.linalg.norm(el - sh)
+                side = p[:, 0] * (1 if s == "l" else -1) > 0.12
+                o += np.where(side, 0.009 * noise.smoothstep(0.05, sleeve, t), 0)
+            collar = noise.smoothstep(neck_pt[2] - 0.08, neck_pt[2], p[:, 2])
+            o = o * (1 - 0.4 * collar)
+            # hang over the pants waistband: stay outside the pants shell
+            over_pants = noise.smoothstep(lm.hips[2] + 0.13, lm.hips[2] + 0.07, p[:, 2])
+            return np.maximum(o, 0.022 * over_pants)
 
-    def shirt_drape(new, used):
-        torso = used[(arms[used] < 0.25) & (new[used, 2] < armpit_z + 0.02)]
-        return drape(new, torso, np.array([0.0, lm.spine2[1] - 0.02, armpit_z]), (0, 0, -1),
-                     start=0.03, taper=0.10)
+        armpit_z = min(lm.shoulder_l[2], lm.shoulder_r[2]) - 0.11
 
-    shirt, cov = build_garment(h, "Shirt", allowed, cuts, shirt_offset, mats["shirt"], post=shirt_drape,
-                               smooth=6, thickness=0.0035, folds=0.006, fold_scale=9,
-                               keep_body=tear_mask if tear else None, drop_faces=tear)
-    parts["shirt"] = shirt
-    h.meta = {"shirt_cuts": cuts, "hem_z": hem_z}
-    covered |= cov
+        def shirt_drape(new, used):
+            torso = used[(arms[used] < 0.25) & (new[used, 2] < armpit_z + 0.02)]
+            return drape(new, torso, np.array([0.0, lm.spine2[1] - 0.02, armpit_z]), (0, 0, -1),
+                         start=0.03, taper=0.10)
 
-    # ---------------- cargo pants
-    waist_z = lm.hips[2] + 0.075
-    boot_top = lm.ankle_l[2] + 0.15
-    cuff_z = boot_top - 0.035
-    cuts = [Cut((0, 0, waist_z), (0, 0, 1)), Cut((0, 0, cuff_z), (0, 0, -1))]
-    allowed = is_body & (arms < 0.05) & (head < 0.05)
+        shirt, cov = build_garment(h, "Shirt", allowed, cuts, shirt_offset, mats["shirt"], post=shirt_drape,
+                                   smooth=6, thickness=0.0035, folds=0.006, fold_scale=9,
+                                   keep_body=tear_mask if tear else None, drop_faces=tear)
+        parts["shirt"] = shirt
+        h.meta = {"shirt_cuts": cuts, "hem_z": hem_z}
+        covered |= cov
 
-    def pants_offset(p, n):
-        knee_z = lm.knee_l[2]
-        t = noise.smoothstep(waist_z, knee_z, p[:, 2])
-        o = 0.007 + 0.010 * t
-        # blousing just above the boot, tight where tucked inside it
-        o += 0.010 * noise.smoothstep(knee_z, boot_top + 0.05, p[:, 2])
-        o *= noise.smoothstep(boot_top - 0.035, boot_top + 0.02, p[:, 2]) * 0.8 + 0.2
-        # cargo pockets bulge on the outer thigh
-        thigh = noise.smoothstep(0.03, 0.09, np.abs(p[:, 0])) * \
-            np.exp(-((p[:, 2] - (knee_z + 0.18)) / 0.08) ** 2) * (np.abs(n[:, 0]) > 0.5)
-        o += 0.008 * thigh
-        return o
+        # ---------------- cargo pants
+        waist_z = lm.hips[2] + 0.075
+        boot_top = lm.ankle_l[2] + 0.15
+        cuff_z = boot_top - 0.035
+        cuts = [Cut((0, 0, waist_z), (0, 0, 1)), Cut((0, 0, cuff_z), (0, 0, -1))]
+        allowed = is_body & (arms < 0.05) & (head < 0.05)
 
-    def pants_drape(new, used):
-        for s_, hip, ankle in ((1, lm.hip_l, lm.ankle_l), (-1, lm.hip_r, lm.ankle_r)):
-            leg = used[(new[used, 0] * s_ > 0.005) & (new[used, 2] < lm.hips[2] - 0.05)]
-            before = new.copy()
-            new = drape(new, leg, hip, ankle - hip, start=0.10, taper=0.07)
-            # blouse: gather the hem back in where it tucks into the boot
-            g = noise.smoothstep(boot_top - 0.03, boot_top + 0.05, new[leg, 2])[:, None]
-            new[leg] = before[leg] + (new[leg] - before[leg]) * g
-        return new
+        def pants_offset(p, n):
+            knee_z = lm.knee_l[2]
+            t = noise.smoothstep(waist_z, knee_z, p[:, 2])
+            o = 0.007 + 0.010 * t
+            # blousing just above the boot, tight where tucked inside it
+            o += 0.010 * noise.smoothstep(knee_z, boot_top + 0.05, p[:, 2])
+            o *= noise.smoothstep(boot_top - 0.035, boot_top + 0.02, p[:, 2]) * 0.8 + 0.2
+            # cargo pockets bulge on the outer thigh
+            thigh = noise.smoothstep(0.03, 0.09, np.abs(p[:, 0])) * \
+                np.exp(-((p[:, 2] - (knee_z + 0.18)) / 0.08) ** 2) * (np.abs(n[:, 0]) > 0.5)
+            o += 0.008 * thigh
+            return o
 
-    pants, cov = build_garment(h, "Pants", allowed, cuts, pants_offset, mats["pants"], post=pants_drape,
-                               smooth=8, thickness=0.004, folds=0.008, fold_scale=7,
-                               keep_body=tear_mask if tear else None, drop_faces=tear)
-    parts["pants"] = pants
-    h.meta.update(pants_cuts=cuts, waist_z=waist_z, cuff_z=cuff_z)
-    covered |= cov
+        def pants_drape(new, used):
+            for s_, hip, ankle in ((1, lm.hip_l, lm.ankle_l), (-1, lm.hip_r, lm.ankle_r)):
+                leg = used[(new[used, 0] * s_ > 0.005) & (new[used, 2] < lm.hips[2] - 0.05)]
+                before = new.copy()
+                new = drape(new, leg, hip, ankle - hip, start=0.10, taper=0.07)
+                # blouse: gather the hem back in where it tucks into the boot
+                g = noise.smoothstep(boot_top - 0.03, boot_top + 0.05, new[leg, 2])[:, None]
+                new[leg] = before[leg] + (new[leg] - before[leg]) * g
+            return new
 
-    # ---------------- boots (voxel-closed shell: toes merge into a toe box)
-    boot_z = lm.ankle_l[2] + 0.15
-    boots = build_boots(h, lm, boot_z, feet_w=legs, mat=mats["boots"])
-    parts["boots"] = boots
-    h.meta["boot_z"] = boot_z
-    deep = is_body & (legs > 0.5) & (co[:, 2] < boot_z - 0.02)
-    covered |= np.array([deep[f].all() for f in h.body_faces])
+        pants, cov = build_garment(h, "Pants", allowed, cuts, pants_offset, mats["pants"], post=pants_drape,
+                                   smooth=8, thickness=0.004, folds=0.008, fold_scale=7,
+                                   keep_body=tear_mask if tear else None, drop_faces=tear)
+        parts["pants"] = pants
+        h.meta.update(pants_cuts=cuts, waist_z=waist_z, cuff_z=cuff_z)
+        covered |= cov
+
+        # ---------------- boots (voxel-closed shell: toes merge into a toe box)
+        boot_z = lm.ankle_l[2] + 0.15
+        boots = build_boots(h, lm, boot_z, feet_w=legs, mat=mats["boots"])
+        parts["boots"] = boots
+        h.meta["boot_z"] = boot_z
+        deep = is_body & (legs > 0.5) & (co[:, 2] < boot_z - 0.02)
+        covered |= np.array([deep[f].all() for f in h.body_faces])
+
+    else:
+        # ---------------- boxer briefs (base body; clothes are added later)
+        h.meta = {}
+        waist_z = lm.hips[2] + 0.035
+        cuts = [Cut((0, 0, waist_z), (0, 0, 1))]
+        for s_, S in ((1, "Left"), (-1, "Right")):
+            hip, knee = getattr(lm, f"hip_{'l' if s_ > 0 else 'r'}"), getattr(lm, f"knee_{'l' if s_ > 0 else 'r'}")
+            d = (knee - hip) / np.linalg.norm(knee - hip)
+            # keep the side towards the hip: leg openings 36% down the thigh
+            c = Cut(hip + (knee - hip) * 0.36, d,
+                    where=(co[:, 0] * s_ > 0) & (co[:, 2] < lm.hips[2] - 0.02) & (arms < 0.05))
+            c.side = s_
+            cuts.append(c)
+        allowed = is_body & (arms < 0.05) & (head < 0.05)
+
+        def brief_offset(p, n):
+            band = noise.smoothstep(waist_z - 0.045, waist_z - 0.03, p[:, 2])
+            return 0.0038 + 0.0012 * band
+
+        under, cov = build_garment(h, "Underwear", allowed, cuts, brief_offset, mats["underwear"],
+                                   smooth=5, thickness=0.0015, delete_margin=0.015)
+        parts["underwear"] = under
+        covered |= cov
+        h.meta.update(under_cuts=cuts, waist_z=waist_z)
 
     # ---------------- hair (short crew cut)
     hc = np.array([0.0, lm.head[1], lm.eye[2] + 0.04])
@@ -489,13 +525,15 @@ def build(h, spec):
     hl = wear.get("hairline", 0.0)
     table = [(0, lm.brow_z + 0.050 + hl), (25, lm.brow_z + 0.046 + hl),
              (45, lm.brow_z + 0.034 + hl), (62, eye_z + 0.020), (75, eye_z - 0.005),
-             (84, eye_z + 0.012), (98, eye_z + 0.024), (108, eye_z - 0.012),
-             (122, eye_z - 0.040), (150, nape + 0.040), (180, nape + 0.030)]
+             (84, eye_z + 0.012), (98, eye_z + 0.024), (108, eye_z - 0.006),
+             (122, eye_z - 0.026), (140, nape + 0.078), (180, nape + 0.074)]
     hair_cut = HairlineCut(hc, table)
     allowed = is_body & (head + bw("Neck") > 0.5) & (co[:, 2] > lm.neck[2] + 0.03) & \
         (np.abs(co[:, 0]) < 0.12)
     top = lm.top
     hair_len = wear.get("hair_len", 0.012)
+    if wear.get("hair_style"):
+        hair_len *= 0.5  # strands carry the volume; the cap is only the base layer
 
     def hair_offset(p, n):
         above = p[:, 2] - hair_cut.line(p)

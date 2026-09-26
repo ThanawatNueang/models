@@ -143,6 +143,15 @@ def apply_targets(human, body):
         idx, d = _load_target(path)
         if len(idx):
             co[idx] += d * w
+    # detail targets (face / neck / torso shaping): {"chin/chin-prominent-incr": 0.3}
+    for rel, w in body.get("detail", {}).items():
+        path = os.path.join(DATA, "targets", "detail", rel + ".target.gz")
+        if not os.path.exists(path):
+            print("  missing detail target", rel)
+            continue
+        idx, d = _load_target(path)
+        if len(idx):
+            co[idx] += d * w
     # MakeHuman: decimetres, Y up, face towards +Z.  Blender: metres, Z up, face -Y.
     bl = np.empty_like(co)
     bl[:, 0] = co[:, 0] * 0.1

@@ -18,7 +18,7 @@ from scipy import ndimage
 import noise
 from noise import smoothstep as ss
 
-RES = {"skin": 4096, "eye": 512, "shirt": 2048, "pants": 2048, "boots": 1024, "hair": 1024}
+RES = {"underwear": 1024, "skin": 4096, "eye": 1024, "shirt": 2048, "pants": 2048, "boots": 1024, "hair": 1024}
 
 
 # ------------------------------------------------------------ raster
@@ -337,7 +337,20 @@ def skin_maps(r, h, look, ao):
     above = hairline.line(P) - P[:, 2]
     scalp = ss(0.004, -0.012, above) * ss(0.4, 0.8, head_w)
     hair_dots = ss(0.45, 0.7, noise.value(P, 1200.0, seed=6))
-    col = mix(col, srgb(look["hair"]) * 1.4, scalp * (0.45 + 0.4 * hair_dots))
+    col = mix(col, srgb(look["hair"]) * 1.6, scalp * (0.12 + 0.3 * hair_dots))
+
+    # --- nipples / areolae + navel (bare torso)
+    chest = np.zeros(n_tex)
+    extra_h = np.zeros(n_tex)
+    for s in (1, -1):
+        c = lm.nipple_l if s > 0 else lm.nipple_r
+        d = np.linalg.norm(P - c, axis=1)
+        chest = np.maximum(chest, ss(0.017, 0.011, d))
+        extra_h += ss(0.006, 0.003, d) * 0.0012
+    col = mix(col, col * srgb((0.72, 0.52, 0.48)), chest * 0.75)
+    nd = np.linalg.norm((P - lm.navel) / np.array([1.0, 1.0, 1.4]), axis=1)
+    extra_h -= ss(0.009, 0.003, nd) * 0.004
+    col = mix(col, col * 0.75, ss(0.008, 0.002, nd) * 0.6)
 
     # --- fingernails
     nail = r.interp(h.W_nail) * ss(0.45, 0.8, N[:, 2])
@@ -355,7 +368,7 @@ def skin_maps(r, h, look, ao):
         col = mix(col, col * srgb((0.82, 0.86, 0.95)), ss(0.5, 0.85, veins) * fore * 0.4)
 
     # --- freckles / moles
-    moles = ss(0.975, 0.99, noise.value(P, 160.0, seed=21)) * face_front
+    moles = ss(0.985, 0.995, noise.value(P, 160.0, seed=21)) * face_front * (0.3 if not zombie else 1.0)
     col = mix(col, col * 0.55, moles * 0.6)
 
     # --- dirt / grime
@@ -364,7 +377,7 @@ def skin_maps(r, h, look, ao):
     grime = np.clip(grime * (0.35 + 0.8 * hands + 0.3 * face_front), 0, 1)
     col = mix(col, srgb((0.30, 0.24, 0.18)), grime * 0.5)
 
-    height = np.zeros(n_tex)
+    height = extra_h.copy()
     rough = np.full(n_tex, 0.52)
     # T-zone shine
     tzone = gauss(nose, 0.02, 0.05, 0.03) + gauss(lm.eye + np.array([0, -0.01, 0.04]), 0.04, 0.05, 0.02)
@@ -396,7 +409,7 @@ def skin_maps(r, h, look, ao):
     forehead = ss(lm.brow_z + 0.012, lm.brow_z + 0.02, P[:, 2]) * \
         ss(lm.brow_z + 0.055, lm.brow_z + 0.035, P[:, 2]) * face_front
     lines = np.sin(P[:, 2] * 2 * np.pi / 0.0075 + noise.fbm(P, 60, 2, seed=52) * 6)
-    age_k = 0.5 if not zombie else 1.4
+    age_k = 0.15 if not zombie else 1.4
     height -= forehead * ss(0.6, 1.0, lines) * 0.00018 * age_k
     for e, s in ((eye_l, 1), (eye_r, -1)):
         crow = gauss(e + np.array([0.028 * s, 0.012, 0]), 0.008, 0.02, 0.012)
@@ -452,36 +465,53 @@ def blood_color(P):
 # ------------------------------------------------------ eye shader
 
 def eye_maps(r, h, look):
+    """Returns (color, height). The height raises a cornea dome over the iris so
+    the wet highlight bends like a real eye; the iris itself is recessed."""
     lm = h.lm
     P = r.P
     col = np.zeros((len(P), 3))
-    for e in (lm.eye_l, lm.eye_r):
+    height = np.zeros(len(P))
+    for e, s in ((lm.eye_l, 1), (lm.eye_r, -1)):
         sel = np.linalg.norm(P - e, axis=1) < lm.eye_radius * 1.3
         d = P[sel] - e
         d /= np.linalg.norm(d, axis=1, keepdims=True)
         fwd = np.array([0.0, -1.0, 0.0])
         th = np.degrees(np.arccos(np.clip(d @ fwd, -1, 1)))
-        phi = np.arctan2(d[:, 2], d[:, 0])
-        iris_r, pupil_r = 27.0, 9.0
-        polar = np.stack([np.cos(phi) * 30, np.sin(phi) * 30, th * 0.02], axis=1)
-        fibers = noise.fbm(polar * np.array([1, 1, 40]), 1.0, 3, seed=80)
+        phi = np.arctan2(d[:, 2], d[:, 0] * s)
+        iris_r, pupil_r = 31.0, 10.5
+        t_ir = np.clip((th - pupil_r) / (iris_r - pupil_r), 0, 1)      # 0 pupil .. 1 limbus
+        polar = np.stack([np.cos(phi) * 40, np.sin(phi) * 40, t_ir * 3.0], axis=1)
+        fibers = noise.fbm(polar * np.array([1, 1, 12]), 1.0, 4, seed=80)
+        crypts = ss(0.62, 0.72, noise.fbm(np.stack([np.cos(phi) * 9, np.sin(phi) * 9, t_ir * 6], 1), 1.0, 3, seed=84))
         iris_c = srgb(look["iris"])
-        iris = iris_c * (0.65 + 0.7 * fibers[:, None])
-        iris = mix(iris, iris_c * 1.6 + 0.05, ss(pupil_r + 6, pupil_r, th) * 0.5)   # collarette
-        iris = mix(iris, iris_c * 0.35, ss(iris_r - 4, iris_r, th))                  # limbal ring
-        sclera = np.tile(srgb((0.86, 0.82, 0.78)), (len(d), 1))
-        veins = ss(0.55, 0.9, noise.ridged(P[sel], 250.0, 2, seed=81)) * ss(40, 85, th)
-        sclera = mix(sclera, srgb((0.78, 0.45, 0.42)), veins * (0.5 if not look["zombie"] else 1.0))
-        sclera = mix(sclera, sclera * srgb((0.95, 0.85, 0.8)), ss(40, 90, th))
+        iris = iris_c * (0.55 + 0.9 * fibers[:, None])
+        # amber collarette around the pupil, darker outer iris, crypts
+        iris = mix(iris, np.clip(iris_c * 2.2 + np.array([0.08, 0.04, 0.0]), 0, 1),
+                   ss(0.45, 0.1, t_ir) * 0.55)
+        iris = mix(iris, iris * 0.45, crypts * 0.5 * ss(0.2, 0.5, t_ir))
+        iris = mix(iris, iris_c * 0.25, ss(0.72, 1.0, t_ir))                  # limbal ring
+        sclera = np.tile(srgb((0.80, 0.77, 0.72)), (len(d), 1))
+        veins = ss(0.55, 0.9, noise.ridged(P[sel], 250.0, 2, seed=81)) * ss(38, 80, th)
+        sclera = mix(sclera, srgb((0.75, 0.42, 0.40)), veins * (0.35 if not look["zombie"] else 0.9))
+        sclera = mix(sclera, sclera * srgb((0.92, 0.84, 0.8)), ss(35, 85, th))
+        # caruncle: pink inner corner (towards the nose)
+        inner = ss(35, 70, th) * ss(0.3, 0.8, -d[:, 0] * s)
+        sclera = mix(sclera, srgb((0.78, 0.46, 0.45)), inner * 0.7)
+        # upper lid shadow on the eyeball
+        sclera = mix(sclera, sclera * 0.55, ss(0.15, 0.55, d[:, 2]) * 0.6)
         if look["zombie"]:
-            sclera = mix(sclera, srgb((0.75, 0.68, 0.45)), 0.35)
-        c = mix(sclera, iris, ss(iris_r + 1.0, iris_r - 1.0, th))
-        pupil = ss(pupil_r + 0.8, pupil_r - 0.8, th)
-        c = mix(c, srgb((0.02, 0.02, 0.02)) if not look["zombie"] else srgb((0.55, 0.57, 0.55)), pupil)
+            sclera = mix(sclera, srgb((0.72, 0.66, 0.44)), 0.35)
+        limbus = ss(iris_r + 1.5, iris_r - 1.5, th)
+        c = mix(sclera, iris, limbus)
+        pupil = ss(pupil_r + 0.6, pupil_r - 0.6, th)
+        c = mix(c, srgb((0.015, 0.012, 0.01)) if not look["zombie"] else srgb((0.55, 0.57, 0.55)), pupil)
         if look["zombie"]:  # milky cataract
             c = mix(c, srgb((0.78, 0.8, 0.76)), ss(iris_r + 2, 0, th) * 0.55)
         col[sel] = c
-    return np.clip(col, 0, 1)
+        # cornea dome (+) over a slightly recessed iris
+        dome = np.cos(np.radians(np.clip(th, 0, iris_r + 4)) * 90 / (iris_r + 4)) * 0.0006
+        height[sel] = np.where(th < iris_r + 4, dome, 0.0) - limbus * 0.00015
+    return np.clip(col, 0, 1), height
 
 
 # --------------------------------------------------- cloth shaders
@@ -643,6 +673,51 @@ def pants_maps(r, h, look, ao):
     return np.clip(col, 0, 1), rough, height
 
 
+def underwear_maps(r, h, look, ao):
+    """Cotton-stretch boxer briefs: elastic waistband, pouch + side seams, hems."""
+    P, N = r.P, r.N
+    lm = h.lm
+    n = len(P)
+    base = srgb(look["underwear"])
+    knit = noise.value(P, 1500.0, seed=130)
+    col = np.tile(base, (n, 1)) * (0.92 + 0.12 * knit[:, None])
+    height = (knit - 0.5) * 0.00004
+    wz = h.meta["waist_z"]
+    band = ss(wz - 0.036, wz - 0.032, P[:, 2])
+    rib = np.sin(np.arctan2(P[:, 0], -P[:, 1]) * 420)
+    height += band * (0.0005 + rib * 0.00012)
+    col = mix(col, srgb(look.get("underwear_band", (0.62, 0.62, 0.64))), band * 0.9)
+    # woven stripe in the band
+    stripe = band * ss(0.004, 0.002, np.abs(P[:, 2] - (wz - 0.016)))
+    col = mix(col, base * 0.6, stripe)
+    # leg hems (distance to the leg cut planes) + waistband stitch
+    arm = np.zeros(n)
+    legcuts = h.meta["under_cuts"][1:]
+    dist = np.min(np.stack([np.where(P[:, 0] * c.side > 0, np.abs((P - c.p) @ c.n), 1.0)
+                            for c in legcuts]), axis=0)
+    st = stitch_line(dist, 0.009, P=P) + stitch_line(dist, 0.012, P=P)
+    st += stitch_line(P[:, 2], wz - 0.038, P=P)
+    # front pouch seam (U shape) and side seams
+    front = (P[:, 1] < lm.hips[1]) & (P[:, 2] < wz - 0.04)
+    pouch_r = np.hypot(P[:, 0] / 0.055, (P[:, 2] - (lm.hips[2] - 0.07)) / 0.09)
+    side = ss(3.0, 0.5, np.abs(np.degrees(np.arctan2(P[:, 1] - lm.hips[1], np.abs(P[:, 0])))))
+    st += side * 0.8
+    st = np.clip(st, 0, 1)
+    height -= st * 0.00025
+    height += noise.stretched(P, np.array([1.0, 0, 0]), 25, 120, 2, seed=131) * 0.0003 - 0.00015
+    col = mix(col, col * 0.7, st * 0.6)
+    del arm
+    rough = np.full(n, 0.8)
+    rough = rough * (1 - band) + 0.6 * band
+    if look["blood"]:
+        dirt = ss(0.5, 0.8, noise.fbm(P, 9.0, 4, seed=132))
+        col = mix(col, srgb((0.3, 0.25, 0.18)), dirt * 0.6)
+        bm = ss(0.62, 0.7, noise.fbm(P, 10.0, 5, seed=133)) * look["blood"]
+        col = mix(col, blood_color(P), bm * 0.8)
+    col = col * (0.5 + 0.5 * ao[:, None])
+    return np.clip(col, 0, 1), rough, height
+
+
 def boots_maps(r, h, look, ao):
     P, N = r.P, r.N
     lm = h.lm
@@ -722,7 +797,7 @@ def hair_maps(r, h, look, ao):
         col = mix(col, srgb((0.30, 0.28, 0.25)), ss(0.55, 0.8, noise.fbm(P, 12, 3, seed=125)) * 0.4)
         col = mix(col, blood_color(P), ss(0.66, 0.74, noise.fbm(P, 9, 4, seed=126)) * 0.8)
     height = (strands - 0.5) * 0.0005
-    rough = 0.42 + 0.15 * (1 - strands)
+    rough = 0.72 + 0.15 * (1 - strands)
     col = col * (0.6 + 0.4 * ao[:, None])
     return np.clip(np.concatenate([col, alpha[:, None]], axis=1), 0, 1), rough, height
 
@@ -806,11 +881,12 @@ def _weights_per_vertex(obj, h, bone_keys):
 
 
 def paint(h, parts, spec, out_dir):
-    look = spec["look"]
+    look = dict(spec["look"], underwear=spec["outfit"].get("underwear", (0.1, 0.1, 0.12)))
     name = spec["name"]
     mats = h.mats
-    for k in ("shirt", "pants", "hair"):
-        _pack_uvs(parts[k])
+    for k in ("shirt", "pants", "hair", "underwear"):
+        if k in parts:
+            _pack_uvs(parts[k])
     print("  ambient occlusion...", flush=True)
     ao = vertex_ao(list(parts.values()))
 
@@ -835,8 +911,12 @@ def paint(h, parts, spec, out_dir):
 
     print("  eyes...", flush=True)
     r = Raster(body, RES["eye"], 1)
-    ei = save_image(f"{name}_eye_color", r.image(eye_maps(r, h, look)), out_dir, fmt="JPEG")
-    principled(mats["eye"], ei, rough=0.04, **{"Coat Weight": 1.0, "Coat Roughness": 0.02})
+    ecol, eh = eye_maps(r, h, look)
+    ei = save_image(f"{name}_eye_color", r.image(ecol), out_dir, fmt="JPEG")
+    en = save_image(f"{name}_eye_normal", height_to_normal(r, eh), out_dir, "Non-Color")
+    principled(mats["eye"], ei, None, en, rough=0.03, normal_strength=1.0,
+               **{"Coat Weight": 1.0, "Coat Roughness": 0.0, "Coat IOR": 1.38,
+                  "Subsurface Weight": 0.3, "Subsurface Scale": 0.002})
     principled(mats["teeth"], color=(0.86, 0.83, 0.74) if not look["zombie"] else (0.6, 0.52, 0.36),
                rough=0.25)
     principled(mats["tongue"], color=(0.62, 0.32, 0.32), rough=0.3,
@@ -846,7 +926,10 @@ def paint(h, parts, spec, out_dir):
             ("shirt", shirt_maps, 1.0, {"Sheen Weight": 0.4, "Sheen Roughness": 0.4}),
             ("pants", pants_maps, 1.0, {"Sheen Weight": 0.2}),
             ("boots", boots_maps, 1.0, {}),
-            ("hair", hair_maps, 1.0, {"alpha": True, "Sheen Weight": 0.3})):
+            ("underwear", underwear_maps, 1.0, {"Sheen Weight": 0.3}),
+            ("hair", hair_maps, 1.0, {"alpha": True, "Specular IOR Level": 0.15})):
+        if key not in parts:
+            continue
         print(f"  {key}...", flush=True)
         o = parts[key]
         if key == "shirt":

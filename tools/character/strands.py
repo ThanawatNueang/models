@@ -7,6 +7,7 @@ The particle systems sit after the Armature modifier, so they follow the rig.
 """
 import bpy
 import numpy as np
+from mathutils import Vector
 
 import noise
 from noise import smoothstep as ss
@@ -48,7 +49,7 @@ def hair_material(name, look):
     melanin = float(np.clip(1.0 - lum * 0.6, 0.3, 0.99))
     hb.inputs["Melanin"].default_value = melanin
     hb.inputs["Melanin Redness"].default_value = 0.12 if not look["zombie"] else 0.08
-    hb.inputs["Roughness"].default_value = 0.35
+    hb.inputs["Roughness"].default_value = 0.45
     hb.inputs["Radial Roughness"].default_value = 0.4
     if "Random Color" in hb.inputs:
         hb.inputs["Random Color"].default_value = 0.15
@@ -101,10 +102,28 @@ def _system(obj, name, group, count, length, mat_name, *, children=0, normal=1.0
     ps.vertex_group_density = group
     if length_group:
         ps.vertex_group_length = length_group
+    _calibrate(obj, ps, length)
     return ps
 
 
-def add(h, parts, look):
+def _calibrate(obj, ps, want):
+    """Advanced hair length follows emission velocity with an unexposed factor;
+    measure the real mean strand length and rescale the velocities to `want`."""
+    bpy.context.view_layer.update()
+    ev = obj.evaluated_get(bpy.context.evaluated_depsgraph_get())
+    eps = ev.particle_systems[ps.name]
+    ls = [(Vector(p.hair_keys[-1].co) - Vector(p.hair_keys[0].co)).length
+          for p in list(eps.particles)[:400] if len(p.hair_keys) > 1]
+    if not ls:
+        return
+    k = want / max(float(np.mean(ls)), 1e-6)
+    st = ps.settings
+    st.normal_factor *= k
+    st.tangent_factor *= k
+    st.object_align_factor = tuple(a * k for a in st.object_align_factor)
+
+
+def add(h, parts, look, scalp=True):
     body = parts["body"]
     cap = parts["hair"]
     lm = h.lm
@@ -129,7 +148,8 @@ def add(h, parts, look):
     _group(cap, "strand_density", dens)
     top = ss(lm.top - 0.12, lm.top - 0.02, co[:, 2])
     _group(cap, "strand_length", 0.35 + 0.65 * top)
-    _system(cap, "ScalpHair", "strand_density", 16000, 0.006, mat.name, children=5,
+    if scalp:
+        _system(cap, "ScalpHair", "strand_density", 16000, 0.006, mat.name, children=5,
             normal=0.8, align=(0.0, 0.006, -0.004), radius=0.00005, clump=0.3, rough=0.0008,
             length_group="strand_length", display=0.25)
 
@@ -150,11 +170,8 @@ def add(h, parts, look):
         lash = np.maximum(lash, lid * (bco[:, 1] < e[1]))
     _group(body, "brows", brow)
     _group(body, "lashes", lash)
-    _system(body, "Eyebrows", "brows", 1800, 0.007, mat.name, normal=0.25,
-            align=(0.0, 0.0, 0.0), radius=0.00004, display=1.0, rand_len=0.4)
-    brows_ps = body.particle_systems["Eyebrows"].settings
-    brows_ps.tangent_factor = 0.9 * 0.007
-    brows_ps.tangent_phase = 0.0
+    _system(body, "Eyebrows", "brows", 1800, 0.007, mat.name, normal=0.35,
+            align=(0.0, -0.1, 0.25), radius=0.00004, display=1.0, rand_len=0.4)
     _system(body, "Eyelashes", "lashes", 260, 0.008, mat.name, normal=0.6,
             align=(0.0, -0.004, 0.006), radius=0.00004, display=1.0, rand_len=0.25)
     return mat

@@ -35,6 +35,7 @@ import outfit  # noqa: E402
 import textures  # noqa: E402
 import scene  # noqa: E402
 import strands  # noqa: E402
+import groom  # noqa: E402
 import variants  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(HERE))
@@ -53,7 +54,8 @@ def build(name):
     rig = human.armature
     # glTF first (mesh hair cap only), then strand hair for Blender renders
     scene.export_glb(rig, os.path.join(out_dir, f"{name}.glb"))
-    strands.add(human, parts, spec["look"])
+    strands.add(human, parts, spec["look"], scalp=False)   # eyebrows + eyelashes
+    groom.build(human, parts, spec["look"], style=spec["outfit"].get("hair_style", "textured_quiff"))
 
     scene.finalize(rig, name)
     bpy.ops.file.pack_all()  # self-contained .blend (textures embedded)
