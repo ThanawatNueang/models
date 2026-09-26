@@ -294,8 +294,12 @@ def pose_relaxed(rig, strength=1.0):
         bpy.context.view_layer.update()
         _aim(rig, f"mixamorig:{side}ForeArm", Vector((0.16 * sgn, -0.22, -1)), strength)
         bpy.context.view_layer.update()
-        for f in ("Index", "Middle", "Ring", "Pinky"):
-            for j, ang in ((1, 18), (2, 25), (3, 15)):
+        # natural relaxed hand: graded curl (index least, pinky most), thumb
+        # resting along the index finger instead of sticking out
+        curl = {"Index": (8, 14, 8), "Middle": (13, 20, 10), "Ring": (17, 24, 12),
+                "Pinky": (21, 27, 14), "Thumb": (22, 12, 10)}
+        for f, angs in curl.items():
+            for j, ang in zip((1, 2, 3), angs):
                 b = pb.get(f"mixamorig:{side}Hand{f}{j}")
                 if b:
                     b.rotation_mode = "XYZ"

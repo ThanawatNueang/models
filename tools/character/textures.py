@@ -353,10 +353,11 @@ def skin_maps(r, h, look, ao):
     col = mix(col, col * 0.75, ss(0.008, 0.002, nd) * 0.6)
 
     # --- fingernails
-    nail = r.interp(h.W_nail) * ss(0.45, 0.8, N[:, 2])
-    nail = ss(0.35, 0.6, nail)
-    nail_col = srgb((0.86, 0.67, 0.62)) if not zombie else srgb((0.45, 0.42, 0.3))
-    col = mix(col, nail_col, nail * 0.85)
+    # nail plate: dorsal side of the distal phalanx only, near the tip
+    nail = r.interp(h.W_nail) * ss(0.6, 0.9, N[:, 2])
+    nail = ss(0.55, 0.8, nail)
+    nail_col = col * srgb((1.05, 0.92, 0.9)) + 0.03 if not zombie else srgb((0.45, 0.42, 0.3))
+    col = mix(col, nail_col, nail * 0.6)
 
     # --- veins (subtle on survivor forearms / strong zombie network)
     fore = r.interp(h.W_forearm)
@@ -383,7 +384,7 @@ def skin_maps(r, h, look, ao):
     tzone = gauss(nose, 0.02, 0.05, 0.03) + gauss(lm.eye + np.array([0, -0.01, 0.04]), 0.04, 0.05, 0.02)
     rough -= 0.12 * np.clip(tzone, 0, 1)
     rough = rough * (1 - lips) + 0.36 * lips
-    rough = rough * (1 - nail) + 0.22 * nail
+    rough = rough * (1 - nail) + 0.35 * nail
 
     if zombie:
         col = zombie_skin(r, h, P, N, col, face_front, hands, look)
