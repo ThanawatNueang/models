@@ -48,6 +48,15 @@ class Raster:
         me.vertices.foreach_get("normal", vn)
         vn = vn.reshape(-1, 3)
         sel = mi == mat_index
+        # skip the inner shell of solidified cloth: it shares the outer UVs
+        inner = np.zeros(len(me.vertices), bool)
+        vg = obj.vertex_groups.get("_shell_inner")
+        if vg is not None:
+            for v in me.vertices:
+                for g in v.groups:
+                    if g.group == vg.index and g.weight > 0.5:
+                        inner[v.index] = True
+            sel &= ~inner[vi].all(axis=1)
         vi, li = vi[sel], li[sel]
         self.res = res
         self.vi = vi
@@ -642,7 +651,7 @@ def boots_maps(r, h, look, ao):
     grain = noise.value(P, 900.0, seed=110)
     col = np.tile(base, (n, 1)) * (0.9 + 0.2 * noise.fbm(P, 20.0, 3, seed=111)[:, None])
     height = (grain - 0.5) * 0.00012
-    rough = 0.55 + 0.2 * (noise.fbm(P, 12.0, 3, seed=112) - 0.5)
+    rough = 0.62 + 0.2 * (noise.fbm(P, 12.0, 3, seed=112) - 0.5)
     # sole: rubber band + tread
     sole = ss(0.024, 0.02, P[:, 2])
     welt = stitch_line(P[:, 2], 0.027, P=P)
@@ -655,7 +664,7 @@ def boots_maps(r, h, look, ao):
     side = np.where(P[:, 0:1] > 0, lm.ankle_l, lm.ankle_r)
     fwd = side[:, 1] - P[:, 1]
     toe = ss(0.10, 0.16, fwd) * (1 - sole)
-    col = mix(col, col * 1.4 + 0.04, toe * ss(0.5, 0.8, noise.fbm(P, 60.0, 3, seed=113)) * 0.6)
+    col = mix(col, col * 1.18 + 0.01, toe * ss(0.5, 0.8, noise.fbm(P, 60.0, 3, seed=113)) * 0.5)
     crease_zone = ss(0.02, 0.06, fwd) * ss(0.12, 0.07, fwd) * ss(0.03, 0.06, P[:, 2]) * ss(-0.2, 0.5, N[:, 2])
     creases = ss(0.6, 0.95, noise.stretched(P, np.array([1.0, 0, 0]), 30, 250, 2, seed=114))
     height -= crease_zone * creases * 0.0006
